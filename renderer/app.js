@@ -17,12 +17,32 @@ const lobby = document.getElementById('lobby')
 const inviteBox = document.getElementById('invite-box')
 const inviteLine = document.getElementById('invite')
 const copyBtn = document.getElementById('copy')
+const nameForm = document.getElementById('name-form')
+const nameInput = document.getElementById('name-input')
+const saveNameBtn = document.getElementById('save-name')
+const nameStatus = document.getElementById('name-status')
 const players = document.getElementById('players')
+const startBtn = document.getElementById('start')
+const turn = document.getElementById('turn')
+const turnTitle = document.getElementById('turn-title')
+const queue = document.getElementById('queue')
 
 let sentPing = false
 let creating = false
 let joining = false
+let savingName = false
+let starting = false
 let invite = ''
+
+function canStart(room) {
+  const list = room.players || []
+  return list.length === 3 && list.every((player) => player.name && player.name.trim())
+}
+
+function authorName(room) {
+  const author = (room.turnOrder || []).find((player) => player.writerKey === room.authorKey)
+  return (author && author.name) || 'Someone'
+}
 
 function showError(message) {
   vaultLine.textContent = message
@@ -41,15 +61,48 @@ function setHomeEnabled(on) {
   inviteInput.disabled = !on
 }
 
+function showQueue(room, listEl) {
+  listEl.replaceChildren()
+  for (const player of room.turnOrder || []) {
+    const li = document.createElement('li')
+    li.textContent = 'Seat ' + player.seat + ' · ' + (player.name || 'Seat ' + player.seat)
+    if (player.writerKey === room.authorKey) li.className = 'current'
+    listEl.appendChild(li)
+  }
+}
+
+function showTurn(room) {
+  home.hidden = true
+  lobby.hidden = true
+  turn.hidden = false
+  starting = false
+  const label = 'Round ' + room.round + ' of ' + (room.roundCount || 3)
+  turnTitle.textContent = room.you.isAuthor
+    ? 'Your turn · ' + label
+    : authorName(room) + ' is writing · ' + label
+  showQueue(room, queue)
+}
+
 function showLobby(room) {
+  if (room.phase && room.phase !== 'lobby') {
+    showTurn(room)
+    return
+  }
+
   home.hidden = true
   lobby.hidden = false
+  turn.hidden = true
   inviteBox.hidden = !(room.you && room.you.isHost)
-  players.replaceChildren()
   const list = room.players || []
+  const me = list.find((player) => player.writerKey === room.you.writerKey)
+  if (me && me.name && document.activeElement !== nameInput) nameInput.value = me.name
+
+  players.replaceChildren()
   for (const player of list) {
     const li = document.createElement('li')
-    li.textContent = player.name ? player.name : 'Seat ' + player.seat
+    li.textContent = player.name
+      ? 'Seat ' + player.seat + ' · ' + player.name
+      : 'Seat ' + player.seat
     players.appendChild(li)
   }
   if (list.length < 2) {
@@ -57,6 +110,38 @@ function showLobby(room) {
     waiting.textContent = 'Waiting for players'
     players.appendChild(waiting)
   }
+
+  if (savingName && me && me.name) {
+    savingName = false
+    saveNameBtn.disabled = false
+    nameStatus.hidden = false
+    nameStatus.textContent = 'Saved'
+    nameStatus.dataset.state = 'ok'
+  }
+
+  startBtn.hidden = !(room.you && room.you.isHost)
+  startBtn.disabled = starting || !canStart(room)
+}
+
+nameForm.onsubmit = (evt) => {
+  evt.preventDefault()
+  const name = nameInput.value.trim()
+  if (!name) {
+    showNotice('Name is empty')
+    return
+  }
+  savingName = true
+  saveNameBtn.disabled = true
+  nameStatus.hidden = true
+  notice.hidden = true
+  bridge.writeWorkerIPC(workers.main, JSON.stringify({ type: 'setName', payload: { name } }))
+}
+
+startBtn.onclick = () => {
+  starting = true
+  startBtn.disabled = true
+  notice.hidden = true
+  bridge.writeWorkerIPC(workers.main, JSON.stringify({ type: 'startGame' }))
 }
 
 joinForm.onsubmit = (evt) => {
@@ -121,10 +206,10 @@ function onJson(message) {
 
   if (message.type === 'invite') {
     const next = (message.payload && message.payload.invite) || ''
-    if (next === invite) return
     invite = next
     inviteLine.value = invite || 'No invite'
     copyBtn.textContent = 'Copy'
+    if (invite) notice.hidden = true
     return
   }
 
@@ -134,8 +219,16 @@ function onJson(message) {
     if (vaultLine.dataset.state === 'ok') {
       creating = false
       joining = false
+      if (starting) {
+        starting = false
+        startBtn.disabled = false
+      }
+      if (savingName) {
+        savingName = false
+        saveNameBtn.disabled = false
+      }
       showNotice(text)
-      if (lobby.hidden) setHomeEnabled(true)
+      if (lobby.hidden && turn.hidden) setHomeEnabled(true)
       return
     }
     showError(text)

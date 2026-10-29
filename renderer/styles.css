@@ -67,14 +67,25 @@ button:disabled {
   cursor: default;
 }
 
-#join-form {
+#join-form,
+#name-form {
   display: flex;
   gap: 8px;
   margin-top: 12px;
 }
 
-#join-form button {
+#join-form button,
+#name-form button {
   margin-top: 0;
+}
+
+#name-status {
+  border-top: none;
+  padding-top: 8px;
+}
+
+#start {
+  width: 100%;
 }
 
 input {
@@ -109,4 +120,15 @@ ul {
 li {
   padding: 10px 0;
   border-top: 1px solid var(--line);
+}
+
+li.current {
+  color: var(--ok);
+}
+
+#turn-title {
+  border-top: none;
+  padding-top: 4px;
+  color: var(--ink);
+  font-size: 18px;
 }

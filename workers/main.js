@@ -9,6 +9,7 @@ const FramedStream = require('framed-stream')
 const path = require('bare-path')
 const fs = require('bare-fs')
 const dir = require('bare-storage')
+const z32 = require('z32')
 const { isBareKit } = require('which-runtime')
 
 // mobile doesn't have the executable path (argv[0])
@@ -45,6 +46,8 @@ const pear = new PearRuntime({ ...updaterConfig, swarm, store })
 
 let pass = null
 let pairing = null
+let cachedInvite = null
+let inviteBusy = false
 
 function toHex(buf) {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
@@ -153,11 +156,68 @@ async function foldRoom() {
   if (!meta) return null
   players.sort((a, b) => a.seat - b.seat)
   const writerKey = toHex(pass.writerKey)
+  const byKey = new Map(players.map((player) => [player.writerKey, player]))
+  const orderKeys = Array.isArray(meta.turnOrder) ? meta.turnOrder : []
+  const turnOrder = orderKeys
+    .map((key) => byKey.get(key))
+    .filter(Boolean)
+    .map((player) => ({
+      writerKey: player.writerKey,
+      name: player.name,
+      seat: player.seat
+    }))
+  const round = meta.round || 0
+  const authorKey =
+    turnOrder.length && round >= 1 && round <= turnOrder.length
+      ? turnOrder[round - 1].writerKey
+      : null
   return {
     phase: meta.phase,
-    round: meta.round,
+    round,
+    roundCount: meta.roundCount || 3,
     players,
-    you: { writerKey, isHost: meta.hostKey === writerKey }
+    turnOrder,
+    authorKey,
+    you: {
+      writerKey,
+      isHost: meta.hostKey === writerKey,
+      isAuthor: authorKey === writerKey
+    }
+  }
+}
+
+async function readInviteFromView() {
+  if (!pass || !pass.base || !pass.base.view) return null
+  const existing = await pass.base.view.findOne('@autopass/invite', {})
+  if (!existing || !existing.invite) return null
+  return z32.encode(existing.invite)
+}
+
+async function ensureInvite() {
+  if (!pass) return
+  if (cachedInvite) {
+    send({ type: 'invite', payload: { invite: cachedInvite } })
+    return
+  }
+  if (inviteBusy) return
+  inviteBusy = true
+  try {
+    // Prefer the invite already in the vault. createInvite can hang on swarm flush.
+    let invite = await readInviteFromView()
+    if (!invite) {
+      try {
+        invite = await withTimeout(pass.createInvite(), 8000, 'invite-timeout')
+      } catch (err) {
+        invite = await readInviteFromView()
+        if (!invite) throw new Error('Could not make invite')
+      }
+    }
+    cachedInvite = invite
+    send({ type: 'invite', payload: { invite: cachedInvite } })
+  } catch (err) {
+    send({ type: 'error', payload: { message: err.message } })
+  } finally {
+    inviteBusy = false
   }
 }
 
@@ -175,10 +235,7 @@ async function publishState() {
         type: 'state',
         payload: { status: 'ready', writerKey: toHex(pass.writerKey), room }
       })
-      if (room && room.you.isHost) {
-        const invite = await pass.createInvite()
-        send({ type: 'invite', payload: { invite } })
-      }
+      if (room && room.you.isHost && room.phase === 'lobby') ensureInvite().catch(() => {})
     } while (foldAgain)
   } finally {
     folding = false
@@ -191,6 +248,7 @@ async function createRoom() {
   const records = await listRecords()
   const meta = records.find((rec) => rec && rec.key === 'meta:room')
   if (!meta) {
+    cachedInvite = null
     await pass.add(
       'meta:room',
       JSON.stringify({ phase: 'lobby', round: 0, turnOrder: [], hostKey: writerKey })
@@ -200,10 +258,43 @@ async function createRoom() {
   await publishState()
 }
 
+async function setName(raw) {
+  if (!pass) throw new Error('Vault is not ready')
+  const name = typeof raw === 'string' ? raw.trim() : ''
+  if (!name) throw new Error('Name is empty')
+  const writerKey = toHex(pass.writerKey)
+  const records = await listRecords()
+  const key = 'player:' + writerKey
+  const rec = records.find((row) => row && row.key === key)
+  if (!rec || typeof rec.value !== 'string') throw new Error('Join the room first')
+  let seat = 0
+  try {
+    seat = JSON.parse(rec.value).seat
+  } catch (err) {
+    throw new Error('Bad player record')
+  }
+  if (typeof seat !== 'number' || seat < 1) throw new Error('Bad seat')
+  await pass.add(key, JSON.stringify({ name, seat }))
+  await publishState()
+}
+
+function readMeta(records) {
+  const meta = records.find((rec) => rec && rec.key === 'meta:room')
+  if (!meta || typeof meta.value !== 'string') return null
+  try {
+    return JSON.parse(meta.value)
+  } catch (err) {
+    return null
+  }
+}
+
 async function ensureSeat() {
   const writerKey = toHex(pass.writerKey)
   const records = await listRecords()
   if (records.some((rec) => rec && rec.key === 'player:' + writerKey)) return
+
+  const meta = readMeta(records)
+  if (meta && Array.isArray(meta.turnOrder) && meta.turnOrder.length > 0) return
 
   let maxSeat = 0
   for (const rec of records) {
@@ -218,6 +309,48 @@ async function ensureSeat() {
   }
 
   await pass.add('player:' + writerKey, JSON.stringify({ name: '', seat: maxSeat + 1 }))
+}
+
+async function startGame() {
+  if (!pass) throw new Error('Vault is not ready')
+  const writerKey = toHex(pass.writerKey)
+  const records = await listRecords()
+  const meta = readMeta(records)
+  if (!meta) throw new Error('No room yet')
+  if (meta.hostKey !== writerKey) throw new Error('Only the host can start')
+  if (meta.phase !== 'lobby') throw new Error('Game already started')
+
+  const players = []
+  for (const rec of records) {
+    if (!rec || typeof rec.key !== 'string' || !rec.key.startsWith('player:')) continue
+    if (typeof rec.value !== 'string') continue
+    try {
+      const value = JSON.parse(rec.value)
+      players.push({
+        writerKey: rec.key.slice('player:'.length),
+        name: (value.name || '').trim(),
+        seat: value.seat
+      })
+    } catch (err) {
+      continue
+    }
+  }
+  players.sort((a, b) => a.seat - b.seat)
+  if (players.length !== 3 || players.some((player) => !player.name)) {
+    throw new Error('Need three named players to start')
+  }
+
+  await pass.add(
+    'meta:room',
+    JSON.stringify({
+      phase: 'submit',
+      round: 1,
+      roundCount: 3,
+      turnOrder: players.map((player) => player.writerKey),
+      hostKey: meta.hostKey
+    })
+  )
+  await publishState()
 }
 
 async function waitForPlayers() {
@@ -344,6 +477,24 @@ pipe.on('data', async (data) => {
   if (parsed.type === 'joinRoom') {
     try {
       await joinRoom(parsed.payload && parsed.payload.invite)
+    } catch (err) {
+      send({ type: 'error', payload: { message: err.message } })
+    }
+    return
+  }
+
+  if (parsed.type === 'setName') {
+    try {
+      await setName(parsed.payload && parsed.payload.name)
+    } catch (err) {
+      send({ type: 'error', payload: { message: err.message } })
+    }
+    return
+  }
+
+  if (parsed.type === 'startGame') {
+    try {
+      await startGame()
     } catch (err) {
       send({ type: 'error', payload: { message: err.message } })
     }

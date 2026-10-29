@@ -29,7 +29,23 @@
           <textarea id="invite" readonly rows="3">Creating invite...</textarea>
           <button id="copy" type="button">Copy</button>
         </div>
+        <form id="name-form">
+          <input
+            id="name-input"
+            type="text"
+            placeholder="Your name"
+            autocomplete="off"
+            maxlength="24"
+          />
+          <button id="save-name" type="submit">Save name</button>
+        </form>
+        <p id="name-status" hidden></p>
         <ul id="players"></ul>
+        <button id="start" type="button" hidden disabled>Start</button>
+      </section>
+      <section id="turn" hidden>
+        <p id="turn-title"></p>
+        <ul id="queue"></ul>
       </section>
     </main>
     <script type="module" src="app.js"></script>
