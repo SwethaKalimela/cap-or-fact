@@ -102,10 +102,6 @@ npm run format     # fix formatting
 npm run package    # packaged app under out/
 ```
 
-## Packaging and OTA
-
-Packaging, signing, and peer-to-peer updates still follow the Pear Electron template. See [docs.pears.com](https://docs.pears.com), [`agent_docs/packaging.md`](agent_docs/packaging.md), and [`agent_docs/updates.md`](agent_docs/updates.md).
-
 ## AI use
 
 Used AI to understand Pear/Autopass, shape Cap or Fact rules and turn flow.
