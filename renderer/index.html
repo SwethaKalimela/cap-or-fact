@@ -10,11 +10,25 @@
       <h1>Cap or Fact</h1>
       <p id="pipe" data-state="loading">Pipe: waiting</p>
       <p id="vault" data-state="loading">Opening vault...</p>
-      <button id="create" type="button" disabled>Create</button>
       <p id="notice" data-state="error" hidden></p>
+      <section id="home">
+        <button id="create" type="button" disabled>Create</button>
+        <form id="join-form">
+          <input
+            id="invite-input"
+            type="text"
+            placeholder="Paste invite"
+            autocomplete="off"
+            disabled
+          />
+          <button id="join" type="submit" disabled>Join</button>
+        </form>
+      </section>
       <section id="lobby" hidden>
-        <p id="invite">Creating invite...</p>
-        <button id="copy" type="button">Copy</button>
+        <div id="invite-box">
+          <textarea id="invite" readonly rows="3">Creating invite...</textarea>
+          <button id="copy" type="button">Copy</button>
+        </div>
         <ul id="players"></ul>
       </section>
     </main>

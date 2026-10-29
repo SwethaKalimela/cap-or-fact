@@ -67,8 +67,37 @@ button:disabled {
   cursor: default;
 }
 
-#invite {
-  word-break: break-all;
+#join-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+#join-form button {
+  margin-top: 0;
+}
+
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+textarea {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  resize: none;
 }
 
 ul {

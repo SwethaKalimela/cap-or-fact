@@ -9,13 +9,19 @@ const pipeLine = document.getElementById('pipe')
 const vaultLine = document.getElementById('vault')
 const createBtn = document.getElementById('create')
 const notice = document.getElementById('notice')
+const home = document.getElementById('home')
+const joinForm = document.getElementById('join-form')
+const inviteInput = document.getElementById('invite-input')
+const joinBtn = document.getElementById('join')
 const lobby = document.getElementById('lobby')
+const inviteBox = document.getElementById('invite-box')
 const inviteLine = document.getElementById('invite')
 const copyBtn = document.getElementById('copy')
 const players = document.getElementById('players')
 
 let sentPing = false
 let creating = false
+let joining = false
 let invite = ''
 
 function showError(message) {
@@ -23,25 +29,55 @@ function showError(message) {
   vaultLine.dataset.state = 'error'
 }
 
-function showNotice(message) {
+function showNotice(message, state) {
   notice.hidden = false
   notice.textContent = message
+  notice.dataset.state = state || 'error'
+}
+
+function setHomeEnabled(on) {
+  createBtn.disabled = !on
+  joinBtn.disabled = !on
+  inviteInput.disabled = !on
 }
 
 function showLobby(room) {
-  createBtn.hidden = true
+  home.hidden = true
   lobby.hidden = false
+  inviteBox.hidden = !(room.you && room.you.isHost)
   players.replaceChildren()
-  for (const player of room.players || []) {
+  const list = room.players || []
+  for (const player of list) {
     const li = document.createElement('li')
     li.textContent = player.name ? player.name : 'Seat ' + player.seat
     players.appendChild(li)
   }
+  if (list.length < 2) {
+    const waiting = document.createElement('li')
+    waiting.textContent = 'Waiting for players'
+    players.appendChild(waiting)
+  }
+}
+
+joinForm.onsubmit = (evt) => {
+  evt.preventDefault()
+  const code = inviteInput.value.trim()
+  if (!code) {
+    showNotice('Invite is empty')
+    return
+  }
+  joining = true
+  setHomeEnabled(false)
+  showNotice('Joining...', 'loading')
+  bridge.writeWorkerIPC(
+    workers.main,
+    JSON.stringify({ type: 'joinRoom', payload: { invite: code } })
+  )
 }
 
 createBtn.onclick = () => {
   creating = true
-  createBtn.disabled = true
+  setHomeEnabled(false)
   notice.hidden = true
   bridge.writeWorkerIPC(workers.main, JSON.stringify({ type: 'createRoom' }))
 }
@@ -74,14 +110,20 @@ function onJson(message) {
       vaultLine.textContent = 'Vault ready'
       vaultLine.dataset.state = 'ok'
       if (payload.room) showLobby(payload.room)
-      else if (!creating) createBtn.disabled = false
+      else if (!creating && !joining) {
+        home.hidden = false
+        lobby.hidden = true
+        setHomeEnabled(true)
+      }
       return
     }
   }
 
   if (message.type === 'invite') {
-    invite = (message.payload && message.payload.invite) || ''
-    inviteLine.textContent = invite || 'No invite'
+    const next = (message.payload && message.payload.invite) || ''
+    if (next === invite) return
+    invite = next
+    inviteLine.value = invite || 'No invite'
     copyBtn.textContent = 'Copy'
     return
   }
@@ -91,8 +133,9 @@ function onJson(message) {
     const text = payload.message || 'Something went wrong'
     if (vaultLine.dataset.state === 'ok') {
       creating = false
+      joining = false
       showNotice(text)
-      if (lobby.hidden) createBtn.disabled = false
+      if (lobby.hidden) setHomeEnabled(true)
       return
     }
     showError(text)
