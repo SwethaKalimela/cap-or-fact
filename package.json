@@ -1,8 +1,8 @@
 {
-  "name": "hello-pear-electron",
-  "productName": "HelloPear",
+  "name": "cap-or-fact",
+  "productName": "Cap or Fact",
   "version": "1.0.0",
-  "upgrade": "pear://<YOUR_KEY_HERE>",
+  "upgrade": "pear://w3uanzowwjnt183gmn3r41o1yhy78mqcayh9s6iq9c5pqndxoq7y",
   "description": "",
   "license": "",
   "author": "",
