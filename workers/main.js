@@ -3,6 +3,7 @@
 const PearRuntime = require('pear-runtime') // pear-runtime on desktop; pear-mobile on mobile
 const Hyperswarm = require('hyperswarm')
 const Corestore = require('corestore')
+const Autopass = require('autopass')
 const goodbye = require('graceful-goodbye')
 const FramedStream = require('framed-stream')
 const path = require('bare-path')
@@ -25,8 +26,22 @@ const updaterConfig = {
 
 const pipe = new FramedStream(Bare.IPC)
 const store = new Corestore(path.join(updaterConfig.dir, 'pear-runtime', 'corestore'))
+const passStore = new Corestore(path.join(updaterConfig.dir, 'app-storage', 'autopass'))
 const swarm = new Hyperswarm()
 const pear = new PearRuntime({ ...updaterConfig, swarm, store })
+
+let pass = null
+
+function toHex(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
+  let out = ''
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0')
+  return out
+}
+
+function send(message) {
+  pipe.write(JSON.stringify(message))
+}
 
 pear.updater.on('error', (err) => pipe.write('updater-error ' + err.message))
 
@@ -49,25 +64,61 @@ pear.updater.on('updated', () => pipe.write('updated'))
 pear.on('minver-required', () => pipe.write('minver-required')) // for mobile store update notification
 
 goodbye(async () => {
+  if (pass) await pass.close()
   await swarm.destroy()
   await pear.close()
   await store.close()
+  await passStore.close()
 })
+
+async function openVault() {
+  try {
+    pass = new Autopass(passStore)
+    await pass.ready()
+    send({
+      type: 'state',
+      payload: { status: 'ready', writerKey: toHex(pass.writerKey), room: null }
+    })
+  } catch (err) {
+    send({ type: 'error', payload: { message: err.message } })
+  }
+}
 
 pipe.on('data', async (data) => {
   const message = data.toString()
-  if (message !== 'pear:applyUpdate') {
+  if (message === 'pear:applyUpdate') {
+    try {
+      await pear.ready()
+      await pear.updater.applyUpdate()
+      pipe.write('pear:updateApplied')
+    } catch (err) {
+      pipe.write('pear:updateFailed ' + err.message)
+    }
+    return
+  }
+
+  let parsed = null
+  if (message.startsWith('{')) {
+    try {
+      parsed = JSON.parse(message)
+    } catch (err) {
+      send({ type: 'error', payload: { message: 'Bad JSON' } })
+      return
+    }
+  }
+
+  if (!parsed || typeof parsed.type !== 'string') {
     pipe.write('unknown-message ' + message)
     return
   }
 
-  try {
-    await pear.ready()
-    await pear.updater.applyUpdate()
-    pipe.write('pear:updateApplied')
-  } catch (err) {
-    pipe.write('pear:updateFailed ' + err.message)
+  if (parsed.type === 'ping') {
+    send({ type: 'pong' })
+    return
   }
+
+  send({ type: 'error', payload: { message: 'Unknown message ' + parsed.type } })
 })
 
-pipe.write('Hello from worker')
+send({ type: 'state', payload: { status: 'loading', writerKey: null, room: null } })
+openVault()

@@ -1,63 +1,93 @@
 const bridge = window.bridge
 const decoder = new TextDecoder('utf-8')
 
-document.getElementById('v').innerText += bridge.pkg().version
-
-function showUpdateReady() {
-  document.getElementById('v').innerText = 'Update ready!'
-  const btn = document.getElementById('update-btn')
-  btn.style.display = 'inline-block'
-  btn.onclick = async () => {
-    btn.disabled = true
-    btn.innerText = 'Updating...'
-    try {
-      await bridge.applyUpdate()
-      await bridge.appAfterUpdate()
-    } catch (err) {
-      document.getElementById('v').innerText = 'Update failed: ' + err.message
-      btn.style.display = 'none'
-    }
-  }
-}
-
-function onWorkerUpdaterEvent(name) {
-  if (name === 'updating') {
-    document.getElementById('v').innerText = 'UPDATING...'
-    return
-  }
-  if (name === 'updated') showUpdateReady()
-}
-
 const workers = {
   main: '/workers/main.js'
 }
 
-bridge.startWorker(workers.main)
-let sentHello = false
+const pipeLine = document.getElementById('pipe')
+const vaultLine = document.getElementById('vault')
 
-const offWorkerStdout = bridge.onWorkerStdout(workers.main, (data) => {
-  console.log('worker stdout', '[', workers.main, ']:', decoder.decode(data))
-})
+let sentPing = false
 
-const offWorkerStderr = bridge.onWorkerStderr(workers.main, (data) => {
-  console.error('worker stderr', '[', workers.main, ']:', decoder.decode(data))
-})
+function showError(message) {
+  vaultLine.textContent = message
+  vaultLine.dataset.state = 'error'
+}
 
-const offWorkerIpc = bridge.onWorkerIPC(workers.main, (data) => {
-  const message = decoder.decode(data)
-  console.log('worker ipc', '[', workers.main, ']:', message)
-  onWorkerUpdaterEvent(message)
-
-  if (!sentHello) {
-    sentHello = true
-    bridge.writeWorkerIPC(workers.main, 'Hello from renderer')
+function onJson(message) {
+  if (message.type === 'pong') {
+    pipeLine.textContent = 'Pipe: pong'
+    pipeLine.dataset.state = 'ok'
+    return
   }
+
+  if (message.type === 'state') {
+    const payload = message.payload || {}
+    if (payload.status === 'loading') {
+      vaultLine.textContent = 'Opening vault...'
+      vaultLine.dataset.state = 'loading'
+      return
+    }
+    if (payload.status === 'ready') {
+      vaultLine.textContent = 'Vault ready'
+      vaultLine.dataset.state = 'ok'
+      return
+    }
+  }
+
+  if (message.type === 'error') {
+    const payload = message.payload || {}
+    showError(payload.message || 'Something went wrong')
+  }
+}
+
+function onUpdater(message) {
+  if (message === 'updating') {
+    vaultLine.textContent = 'Updating...'
+    vaultLine.dataset.state = 'loading'
+    return
+  }
+  if (message === 'updated') {
+    vaultLine.textContent = 'Update ready'
+    vaultLine.dataset.state = 'ok'
+  }
+}
+
+function sendPing() {
+  if (sentPing) return
+  sentPing = true
+  bridge.writeWorkerIPC(workers.main, JSON.stringify({ type: 'ping' }))
+}
+
+bridge.startWorker(workers.main)
+
+bridge.onWorkerStdout(workers.main, (data) => {
+  console.log('worker stdout', decoder.decode(data))
 })
 
-const offWorkerExit = bridge.onWorkerExit(workers.main, (code) => {
+bridge.onWorkerStderr(workers.main, (data) => {
+  console.error('worker stderr', decoder.decode(data))
+})
+
+bridge.onWorkerIPC(workers.main, (data) => {
+  const message = decoder.decode(data)
+  console.log('worker ipc', message)
+  sendPing()
+
+  if (message.startsWith('{')) {
+    try {
+      onJson(JSON.parse(message))
+    } catch (err) {
+      showError('Bad message from worker')
+    }
+    return
+  }
+
+  onUpdater(message)
+})
+
+bridge.onWorkerExit(workers.main, (code) => {
   console.log('Worker exited with code', code)
-  offWorkerStdout()
-  offWorkerStderr()
-  offWorkerIpc()
-  offWorkerExit()
+  if (code) showError('Worker stopped (' + code + ')')
 })

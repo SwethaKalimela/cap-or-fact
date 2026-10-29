@@ -26,6 +26,7 @@
     "install:fs-xattr": "cd node_modules/fs-xattr && node-gyp rebuild"
   },
   "dependencies": {
+    "autopass": "^3.4.1",
     "bare-path": "^3.1.2",
     "bare-storage": "^1.1.0",
     "corestore": "^7.15.0",
