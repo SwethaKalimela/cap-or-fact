@@ -10,6 +10,13 @@
       <h1>Cap or Fact</h1>
       <p id="pipe" data-state="loading">Pipe: waiting</p>
       <p id="vault" data-state="loading">Opening vault...</p>
+      <button id="create" type="button" disabled>Create</button>
+      <p id="notice" data-state="error" hidden></p>
+      <section id="lobby" hidden>
+        <p id="invite">Creating invite...</p>
+        <button id="copy" type="button">Copy</button>
+        <ul id="players"></ul>
+      </section>
     </main>
     <script type="module" src="app.js"></script>
   </body>

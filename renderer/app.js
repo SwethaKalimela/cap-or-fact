@@ -7,12 +7,53 @@ const workers = {
 
 const pipeLine = document.getElementById('pipe')
 const vaultLine = document.getElementById('vault')
+const createBtn = document.getElementById('create')
+const notice = document.getElementById('notice')
+const lobby = document.getElementById('lobby')
+const inviteLine = document.getElementById('invite')
+const copyBtn = document.getElementById('copy')
+const players = document.getElementById('players')
 
 let sentPing = false
+let creating = false
+let invite = ''
 
 function showError(message) {
   vaultLine.textContent = message
   vaultLine.dataset.state = 'error'
+}
+
+function showNotice(message) {
+  notice.hidden = false
+  notice.textContent = message
+}
+
+function showLobby(room) {
+  createBtn.hidden = true
+  lobby.hidden = false
+  players.replaceChildren()
+  for (const player of room.players || []) {
+    const li = document.createElement('li')
+    li.textContent = player.name ? player.name : 'Seat ' + player.seat
+    players.appendChild(li)
+  }
+}
+
+createBtn.onclick = () => {
+  creating = true
+  createBtn.disabled = true
+  notice.hidden = true
+  bridge.writeWorkerIPC(workers.main, JSON.stringify({ type: 'createRoom' }))
+}
+
+copyBtn.onclick = async () => {
+  if (!invite) return
+  try {
+    await navigator.clipboard.writeText(invite)
+    copyBtn.textContent = 'Copied'
+  } catch (err) {
+    showNotice('Could not copy')
+  }
 }
 
 function onJson(message) {
@@ -32,13 +73,29 @@ function onJson(message) {
     if (payload.status === 'ready') {
       vaultLine.textContent = 'Vault ready'
       vaultLine.dataset.state = 'ok'
+      if (payload.room) showLobby(payload.room)
+      else if (!creating) createBtn.disabled = false
       return
     }
   }
 
+  if (message.type === 'invite') {
+    invite = (message.payload && message.payload.invite) || ''
+    inviteLine.textContent = invite || 'No invite'
+    copyBtn.textContent = 'Copy'
+    return
+  }
+
   if (message.type === 'error') {
     const payload = message.payload || {}
-    showError(payload.message || 'Something went wrong')
+    const text = payload.message || 'Something went wrong'
+    if (vaultLine.dataset.state === 'ok') {
+      creating = false
+      showNotice(text)
+      if (lobby.hidden) createBtn.disabled = false
+      return
+    }
+    showError(text)
   }
 }
 

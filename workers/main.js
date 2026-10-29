@@ -71,14 +71,97 @@ goodbye(async () => {
   await passStore.close()
 })
 
+let folding = false
+let foldAgain = false
+
+function listRecords() {
+  return pass.list().toArray()
+}
+
+async function foldRoom() {
+  const records = await listRecords()
+  let meta = null
+  const players = []
+
+  for (const rec of records) {
+    if (!rec || typeof rec.key !== 'string' || typeof rec.value !== 'string') continue
+    let value
+    try {
+      value = JSON.parse(rec.value)
+    } catch (err) {
+      continue
+    }
+    if (rec.key === 'meta:room') meta = value
+    else if (rec.key.startsWith('player:')) {
+      players.push({
+        writerKey: rec.key.slice('player:'.length),
+        name: value.name || '',
+        seat: value.seat
+      })
+    }
+  }
+
+  if (!meta) return null
+  players.sort((a, b) => a.seat - b.seat)
+  const writerKey = toHex(pass.writerKey)
+  return {
+    phase: meta.phase,
+    round: meta.round,
+    players,
+    you: { writerKey, isHost: meta.hostKey === writerKey }
+  }
+}
+
+async function publishState() {
+  if (folding) {
+    foldAgain = true
+    return
+  }
+  folding = true
+  try {
+    do {
+      foldAgain = false
+      const room = await foldRoom()
+      send({
+        type: 'state',
+        payload: { status: 'ready', writerKey: toHex(pass.writerKey), room }
+      })
+    } while (foldAgain)
+  } finally {
+    folding = false
+  }
+}
+
+async function createRoom() {
+  if (!pass) throw new Error('Vault is not ready')
+  const writerKey = toHex(pass.writerKey)
+  const records = await listRecords()
+  const meta = records.find((rec) => rec && rec.key === 'meta:room')
+  if (!meta) {
+    await pass.add(
+      'meta:room',
+      JSON.stringify({ phase: 'lobby', round: 0, turnOrder: [], hostKey: writerKey })
+    )
+    await pass.add('player:' + writerKey, JSON.stringify({ name: '', seat: 1 }))
+  }
+  const invite = await pass.createInvite()
+  send({ type: 'invite', payload: { invite } })
+  await publishState()
+}
+
 async function openVault() {
   try {
     pass = new Autopass(passStore)
-    await pass.ready()
-    send({
-      type: 'state',
-      payload: { status: 'ready', writerKey: toHex(pass.writerKey), room: null }
+    pass.on('update', () => {
+      publishState().catch((err) => send({ type: 'error', payload: { message: err.message } }))
     })
+    await pass.ready()
+    await publishState()
+    const room = await foldRoom()
+    if (room && room.you.isHost) {
+      const invite = await pass.createInvite()
+      send({ type: 'invite', payload: { invite } })
+    }
   } catch (err) {
     send({ type: 'error', payload: { message: err.message } })
   }
@@ -114,6 +197,15 @@ pipe.on('data', async (data) => {
 
   if (parsed.type === 'ping') {
     send({ type: 'pong' })
+    return
+  }
+
+  if (parsed.type === 'createRoom') {
+    try {
+      await createRoom()
+    } catch (err) {
+      send({ type: 'error', payload: { message: err.message } })
+    }
     return
   }
 

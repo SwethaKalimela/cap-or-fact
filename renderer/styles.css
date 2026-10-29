@@ -50,3 +50,34 @@ p[data-state='ok'] {
 p[data-state='error'] {
   color: var(--err);
 }
+
+button {
+  margin-top: 16px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--bg);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#invite {
+  word-break: break-all;
+}
+
+ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+li {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
